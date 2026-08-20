@@ -131,8 +131,8 @@ _write_template() {
 #
 # Then run:  boa-restore check
 
-_SERVICE="b2"                  # aws | aws_one_zone | aws_standard_ia | azure |
-                               # b2 | cloudflare | do_spaces | linode | wasabi
+_SERVICE="b2"                  # aws | aws_one_zone | aws_standard_ia | azure | b2 |
+                               # cloudflare | do_spaces | gcs | ibm | linode | wasabi
 _ACCOUNT="o1"                  # your account name
 _SERVER="server.example.com"   # your server hostname
 
@@ -261,14 +261,31 @@ _set_target() {
       _TARGET_URL="s3://${WASABI_ACCESS_KEY}:${WASABI_SECRET_KEY}@${WASABI_REGION}/${_BUCKET}"
       _TARGET_SHOW="s3://${WASABI_ACCESS_KEY}:$(_mask "${WASABI_SECRET_KEY}")@${WASABI_REGION}/${_BUCKET}"
       ;;
-    gcs|ibm)
-      _die "Off-server restore for '${_SERVICE}' is not supported by this tool —
-its authentication is backend-specific. Ask your host, or use a provider
-from: aws aws_one_zone aws_standard_ia azure b2 cloudflare do_spaces linode wasabi"
+    gcs)
+      # GCS XML interoperability API with HMAC keys via the boto3
+      # backend — same construction as the server side.
+      [[ -n "${GCS_ACCESS_KEY_ID}" && -n "${GCS_SECRET_ACCESS_KEY}" ]] \
+        || _die "GCS_ACCESS_KEY_ID / GCS_SECRET_ACCESS_KEY missing — paste them into ${_CONF}"
+      export AWS_ACCESS_KEY_ID="${GCS_ACCESS_KEY_ID}"
+      export AWS_SECRET_ACCESS_KEY="${GCS_SECRET_ACCESS_KEY}"
+      _EXTRA_OPTS=(--s3-endpoint-url "https://storage.googleapis.com")
+      _TARGET_URL="boto3+s3://${_BUCKET}"
+      _TARGET_SHOW="${_TARGET_URL}"
+      ;;
+    ibm)
+      # IBM COS S3-compatible endpoint with HMAC service credentials —
+      # same construction as the server side.
+      [[ -n "${IBM_ACCESS_KEY_ID}" && -n "${IBM_SECRET_ACCESS_KEY}" && -n "${IBM_REGION}" ]] \
+        || _die "IBM_ACCESS_KEY_ID / IBM_SECRET_ACCESS_KEY / IBM_REGION missing — paste them into ${_CONF}"
+      export AWS_ACCESS_KEY_ID="${IBM_ACCESS_KEY_ID}"
+      export AWS_SECRET_ACCESS_KEY="${IBM_SECRET_ACCESS_KEY}"
+      _EXTRA_OPTS=(--s3-endpoint-url "https://s3.${IBM_REGION}.cloud-object-storage.appdomain.cloud")
+      _TARGET_URL="boto3+s3://${_BUCKET}"
+      _TARGET_SHOW="${_TARGET_URL}"
       ;;
     *)
       _die "Unknown _SERVICE '${_SERVICE}' in ${_CONF}. Supported:
-aws aws_one_zone aws_standard_ia azure b2 cloudflare do_spaces linode wasabi"
+aws aws_one_zone aws_standard_ia azure b2 cloudflare do_spaces gcs ibm linode wasabi"
       ;;
   esac
 }

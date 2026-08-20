@@ -51,7 +51,7 @@ is ever overwritten. Restore paths are written the way the backup stores
 them: relative to the server's filesystem root, with no leading slash.
 
 Supported services: `aws`, `aws_one_zone`, `aws_standard_ia`, `azure`,
-`b2`, `cloudflare`, `do_spaces`, `linode`, `wasabi`.
+`b2`, `cloudflare`, `do_spaces`, `gcs`, `ibm`, `linode`, `wasabi`.
 
 ## Licence
 
