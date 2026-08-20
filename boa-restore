@@ -336,6 +336,10 @@ _check() {
     _alrt "   copy the exact name from your storage provider's console into"
     _alrt "   _BUCKET in ${_CONF}. (On Amazon, check the tier suffix too:"
     _alrt "   -aws, -aws-one-zone or -aws-standard-ia.)"
+    _alrt " - A 'requires ... SDK' or 'pip install' message means your"
+    _alrt "   Duplicity is missing the provider library — install"
+    _alrt "   python3-b2sdk (B2) or python3-boto3 (S3 family) with your"
+    _alrt "   package manager, or use the pipx route from the docs."
     _alrt " - Authentication errors: re-check the pasted credential lines."
     _alrt " - Decryption errors: re-check the passphrase file — exactly 44"
     _alrt "   characters on one line, nothing else."
@@ -360,19 +364,28 @@ _restore() {
   _derive_bucket
   _set_target
   _load_passphrase
-  local _stamp _target _n=1
+  local _stamp _target _final _n=1
   _stamp="$(date -u +%Y%m%d-%H%M%S)"
   _target="${_RESTORE_BASE}/${_stamp}"
   while [[ -e "${_target}" ]]; do
     _n=$((_n+1))
     _target="${_RESTORE_BASE}/${_stamp}-${_n}"
   done
+  # Restoring one path: land it INSIDE the fresh folder under its own
+  # name (same as mybackup server-side) — Duplicity writes the restored
+  # file or directory AS the target path, so the target itself must not
+  # pre-exist; only its parent may.
+  if [[ -n "${_path}" ]]; then
+    _final="${_target}/$(basename "${_path%/}")"
+  else
+    _final="${_target}"
+  fi
   mkdir -p "${_target}"
   local _args=(restore --no-restore-ownership)
   [[ -n "${_time}" ]] && _args=("${_args[@]}" --time "${_time}")
   [[ -n "${_path}" ]] && _args=("${_args[@]}" --path-to-restore "${_path}")
   _msg "Restoring into ${_target} ..."
-  if _run_duplicity "${_args[@]}" "${_TARGET_URL}" "${_target}"; then
+  if _run_duplicity "${_args[@]}" "${_TARGET_URL}" "${_final}"; then
     _msg ""
     _info "Done. Your files are in: ${_target}"
     _alrt "Note: a full restore includes credential files (your cloud keys,"
