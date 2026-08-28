@@ -171,6 +171,13 @@ _load_config() {
     -rw-------*) : ;;
     *) _alrt "Tip: keep your config private with: chmod 600 ${_CONF}" ;;
   esac
+  # Only the config file feeds provider credentials. A stale AWS SSO or
+  # assume-role session in the caller's shell would otherwise ride into
+  # requests signed for unrelated providers (boto3 reads the session
+  # token together with the key pair), and an ambient day-job key pair
+  # would satisfy the missing-credentials checks with the wrong identity.
+  unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN \
+    AWS_SECURITY_TOKEN AWS_REGION AWS_DEFAULT_REGION AWS_PROFILE
   # The config is the user's own file on their own machine; sourcing it is
   # the same trust level as their shell profile.
   # shellcheck disable=SC1090
@@ -205,7 +212,7 @@ _derive_bucket() {
 }
 
 # Build the same target URL the server-side tools build per provider.
-# Sets _TARGET_URL and (for the aws family) _EXTRA_OPTS.
+# Sets _TARGET_URL and (for the S3-compatible backends) _EXTRA_OPTS.
 _set_target() {
   _EXTRA_OPTS=()
   case "${_SERVICE}" in
@@ -238,28 +245,60 @@ _set_target() {
       _TARGET_SHOW="b2://${_id}:$(_mask "${_key}")@${_BUCKET}"
       ;;
     cloudflare)
+      # Credentials must go via env vars — the boto3 backend reads the
+      # whole URL netloc as the bucket name, never userinfo credentials;
+      # R2 expects the literal region "auto". Same construction as the
+      # server side.
       [[ -n "${R2_ACCOUNT_ID}" && -n "${R2_ACCESS_KEY_ID}" && -n "${R2_SECRET_ACCESS_KEY}" ]] \
         || _die "R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY missing — paste them into ${_CONF}"
-      _TARGET_URL="boto3+s3://${R2_ACCESS_KEY_ID}:${R2_SECRET_ACCESS_KEY}@https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${_BUCKET}"
-      _TARGET_SHOW="boto3+s3://${R2_ACCESS_KEY_ID}:$(_mask "${R2_SECRET_ACCESS_KEY}")@https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${_BUCKET}"
+      export AWS_ACCESS_KEY_ID="${R2_ACCESS_KEY_ID}"
+      export AWS_SECRET_ACCESS_KEY="${R2_SECRET_ACCESS_KEY}"
+      local _r2_endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+      _EXTRA_OPTS=(--s3-endpoint-url "${_r2_endpoint}" --s3-region-name auto)
+      _TARGET_URL="boto3+s3://${_BUCKET}"
+      _TARGET_SHOW="${_TARGET_URL} (endpoint: ${_r2_endpoint})"
       ;;
     do_spaces)
+      # Credentials must go via env vars — the boto3 backend reads the
+      # whole URL netloc as the bucket name, never userinfo credentials.
+      # Same construction as the server side.
       [[ -n "${DO_SPACES_KEY}" && -n "${DO_SPACES_SECRET}" && -n "${DO_SPACES_REGION}" ]] \
         || _die "DO_SPACES_KEY / DO_SPACES_SECRET / DO_SPACES_REGION missing — paste them into ${_CONF}"
-      _TARGET_URL="s3://${DO_SPACES_KEY}:${DO_SPACES_SECRET}@${DO_SPACES_REGION}/${_BUCKET}"
-      _TARGET_SHOW="s3://${DO_SPACES_KEY}:$(_mask "${DO_SPACES_SECRET}")@${DO_SPACES_REGION}/${_BUCKET}"
+      export AWS_ACCESS_KEY_ID="${DO_SPACES_KEY}"
+      export AWS_SECRET_ACCESS_KEY="${DO_SPACES_SECRET}"
+      local _do_endpoint="https://${DO_SPACES_REGION}.digitaloceanspaces.com"
+      _EXTRA_OPTS=(--s3-endpoint-url "${_do_endpoint}" \
+        --s3-region-name "${DO_SPACES_REGION}")
+      _TARGET_URL="boto3+s3://${_BUCKET}"
+      _TARGET_SHOW="${_TARGET_URL} (endpoint: ${_do_endpoint})"
       ;;
     linode)
+      # Credentials must go via env vars — the boto3 backend reads the
+      # whole URL netloc as the bucket name, never userinfo credentials.
+      # Same construction as the server side.
       [[ -n "${LINODE_ACCESS_KEY}" && -n "${LINODE_SECRET_KEY}" && -n "${LINODE_REGION}" ]] \
         || _die "LINODE_ACCESS_KEY / LINODE_SECRET_KEY / LINODE_REGION missing — paste them into ${_CONF}"
-      _TARGET_URL="s3://${LINODE_ACCESS_KEY}:${LINODE_SECRET_KEY}@${LINODE_REGION}/${_BUCKET}"
-      _TARGET_SHOW="s3://${LINODE_ACCESS_KEY}:$(_mask "${LINODE_SECRET_KEY}")@${LINODE_REGION}/${_BUCKET}"
+      export AWS_ACCESS_KEY_ID="${LINODE_ACCESS_KEY}"
+      export AWS_SECRET_ACCESS_KEY="${LINODE_SECRET_KEY}"
+      local _linode_endpoint="https://${LINODE_REGION}.linodeobjects.com"
+      _EXTRA_OPTS=(--s3-endpoint-url "${_linode_endpoint}" \
+        --s3-region-name "${LINODE_REGION}")
+      _TARGET_URL="boto3+s3://${_BUCKET}"
+      _TARGET_SHOW="${_TARGET_URL} (endpoint: ${_linode_endpoint})"
       ;;
     wasabi)
+      # Credentials must go via env vars — the boto3 backend reads the
+      # whole URL netloc as the bucket name, never userinfo credentials.
+      # Same construction as the server side.
       [[ -n "${WASABI_ACCESS_KEY}" && -n "${WASABI_SECRET_KEY}" && -n "${WASABI_REGION}" ]] \
         || _die "WASABI_ACCESS_KEY / WASABI_SECRET_KEY / WASABI_REGION missing — paste them into ${_CONF}"
-      _TARGET_URL="s3://${WASABI_ACCESS_KEY}:${WASABI_SECRET_KEY}@${WASABI_REGION}/${_BUCKET}"
-      _TARGET_SHOW="s3://${WASABI_ACCESS_KEY}:$(_mask "${WASABI_SECRET_KEY}")@${WASABI_REGION}/${_BUCKET}"
+      export AWS_ACCESS_KEY_ID="${WASABI_ACCESS_KEY}"
+      export AWS_SECRET_ACCESS_KEY="${WASABI_SECRET_KEY}"
+      local _wasabi_endpoint="https://s3.${WASABI_REGION}.wasabisys.com"
+      _EXTRA_OPTS=(--s3-endpoint-url "${_wasabi_endpoint}" \
+        --s3-region-name "${WASABI_REGION}")
+      _TARGET_URL="boto3+s3://${_BUCKET}"
+      _TARGET_SHOW="${_TARGET_URL} (endpoint: ${_wasabi_endpoint})"
       ;;
     gcs)
       # GCS XML interoperability API with HMAC keys via the boto3
@@ -309,8 +348,10 @@ _validate_restore_args() {
 _run_duplicity() {
   # Read-only by design: the only verbs this function is ever handed are
   # collection-status, list-current-files and restore.
+  # Options go right after the verb, before any positional argument —
+  # the option placement the server-side tools have always used.
   mkdir -p "${_CACHE_DIR}"
-  duplicity "$@" --archive-dir "${_CACHE_DIR}" "${_EXTRA_OPTS[@]}"
+  duplicity "$1" --archive-dir "${_CACHE_DIR}" "${_EXTRA_OPTS[@]}" "${@:2}"
 }
 
 _check() {
@@ -340,6 +381,9 @@ _check() {
     _alrt "   Duplicity is missing the provider library — install"
     _alrt "   python3-b2sdk (B2) or python3-boto3 (S3 family) with your"
     _alrt "   package manager, or use the pipx route from the docs."
+    _alrt " - 'Could not resolve host' or connection errors usually mean a"
+    _alrt "   wrong region value in the credential lines — for S3-compatible"
+    _alrt "   services the region selects the endpoint."
     _alrt " - Authentication errors: re-check the pasted credential lines."
     _alrt " - Decryption errors: re-check the passphrase file — exactly 44"
     _alrt "   characters on one line, nothing else."
