@@ -229,10 +229,16 @@ _set_target() {
       _TARGET_SHOW="${_TARGET_URL}"
       ;;
     azure)
-      [[ -n "${AZURE_STORAGE_ACCOUNT}" && -n "${AZURE_STORAGE_KEY}" ]] \
-        || _die "AZURE_STORAGE_ACCOUNT / AZURE_STORAGE_KEY missing — paste them into ${_CONF}"
-      export AZURE_STORAGE_ACCOUNT AZURE_STORAGE_KEY
-      _TARGET_URL="azure://${AZURE_STORAGE_ACCOUNT}@${_BUCKET}"
+      # Duplicity's azure backend reads AZURE_CONNECTION_STRING only and
+      # takes the container from the URL (azure://<container>); the server
+      # composes the string from the account and key the same way.
+      if [[ -z "${AZURE_CONNECTION_STRING}" ]]; then
+        [[ -n "${AZURE_STORAGE_ACCOUNT}" && -n "${AZURE_STORAGE_KEY}" ]] \
+          || _die "AZURE_STORAGE_ACCOUNT / AZURE_STORAGE_KEY missing — paste them into ${_CONF}"
+        AZURE_CONNECTION_STRING="DefaultEndpointsProtocol=https;AccountName=${AZURE_STORAGE_ACCOUNT};AccountKey=${AZURE_STORAGE_KEY};EndpointSuffix=core.windows.net"
+      fi
+      export AZURE_CONNECTION_STRING
+      _TARGET_URL="azure://${_BUCKET}"
       _TARGET_SHOW="${_TARGET_URL}"
       ;;
     b2)
